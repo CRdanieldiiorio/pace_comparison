@@ -1,0 +1,1493 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Dec 5 10:59:35 2022
+@author: Dani Di Iorio
+"""
+import pandas as pd
+import os
+import time
+import plotly.graph_objects as go
+import dash
+import dash_bootstrap_components as dbc
+import webbrowser
+import numpy as np
+from glob import glob
+from tkinter import filedialog
+from tkinter import *
+from plotly.subplots import make_subplots
+from dash import dcc, html
+from scipy.signal import savgol_filter
+import logging
+
+# Wintax channels
+speed_channels = ['CarSpeed', 'Car_Speed_F4']
+steer_channels = ['Steer_Correct', 'Steering_Angle', 'aSteering', 'Steering_Angle']
+throttle_channels = ['Pedal', 'EngLoad_Req', 'EngLoad_Map', 'rPedal']
+brake_channels = ['Brake_Press', 'pBrakeF', 'pBrakeR']
+gear_channels = ['Gear']
+distance_channels = ['Distance']
+latitud_channels = ['Gps_Latitude_Dec', 'GPS_LAT', 'Gps_Latitude_Dec_NoRx']
+longitud_channels = ['Gps_Longitud_Dec', 'GPS_LONG', 'Gps_Longitud_Dec_NoRx']
+line_channels = ['Line']
+
+text_instructions = \
+    'INSTRUCTIONS\n' \
+    '1. Download with Wintax the push laps to compare with "Pace_Comparison_V2.8.ech" Template.\n' \
+    '2. Use the following example as a path to download:\n ' \
+    '   D:\A_CAMPOS\Category\Year\Events\Actual_Event\Reports\PaceComparison\Session\Driver\n' \
+    '3. Select your category with the dropdown ar add it.\n' \
+    '4. If you want to show another channel, change it with the dropdowns.\n' \
+    '5. Select the numbers of runs to calculate.\n' \
+    '6. After doing the calculations, the tabs are activated and the graphs can be viewed.\n' \
+    '7. The graphs are the following:\n' \
+    '   7.1. Menu layout. \n' \
+    '   7.2. Driving layout, with the medium, min and max of the data.\n' \
+    '   7.3. Line layout, with GPS map and line .\n' \
+    '8. You can download the graphs with the button "Download graphs". You only need to select the desired ' \
+    'path and the name for the file. An HTML file is downloaded.'
+instructions_pacecomparison = \
+    html.Div([
+        html.Div([
+            html.Blockquote(style={'height': '40px'}),
+        ]),
+        html.Div([
+            dcc.Textarea(
+                id='textarea-example',
+                value=text_instructions,
+                style={'width': '100%', 'height': 500, 'borderWidth': '1px', 'borderStyle': 'dashed',
+                       'borderRadius': '5px', 'background': 'lightyellow', 'fontSize': 20},
+            ),
+            html.Div(id='textarea-example-output', style={'whiteSpace': 'pre-line'}),
+            html.Blockquote(),
+        ], style={"display": "grid", "grid-template-columns": "97% 3%"})
+    ])
+
+
+def GetFolderPath():
+    root = Tk()
+    root.attributes('-topmost', True)
+    root.withdraw()
+    folderpath = filedialog.askdirectory()
+    root.destroy()
+    return folderpath
+
+
+def find_all_files_ending(loc_path, ext):
+    """this gives you all the files in a directory and subdirectories terminating in a particular extension."""
+    all_files = [file
+                 for path, subdir, files in os.walk(loc_path)
+                 for file in glob(os.path.join(path, ext))]
+    return all_files
+
+
+def Get_all_laps(num_runs, category_input):
+    global laps_path
+    laps_list = []
+    laps_path = []
+    category = category_input
+    for i in range(num_runs):
+        print("Choose the path where the laps have been exported. "
+              "{} paths remaining. ".format(num_runs - i))
+        laps_path_temp = GetFolderPath()
+        laps_path.append(laps_path_temp)
+
+    i = 0
+    for l_path in laps_path:
+        laps_list.append([])
+        files_list = find_all_files_ending(l_path, '*.csv')
+
+        if len(files_list) == 0:
+            print('There are no laps to calculate on the path: {}'.format(l_path))
+            time.sleep(5)
+            exit()
+
+        if len(files_list) == 1:
+            print('There is only one lap on the path: {}'.format(l_path))
+            print('Export more laps or select another path.')
+            time.sleep(5)
+            exit()
+
+        for path in files_list:
+            path = path.replace('//', '/')
+            path = path.replace('\\', '/')
+            laps_list[i].append(path)
+
+        laps_list[i] = [[]] + laps_list[i]
+
+        if ('/' + category + '/') in l_path:
+            event_temp = l_path.find('/' + category + '/')
+            path_temp = l_path[event_temp:]
+            path_temp = path_temp[len('/' + category + '/'):]
+            year_temp = path_temp[:path_temp.find('/')]
+            path_temp = path_temp[len(year_temp) + 1:]
+            path1 = path_temp[:path_temp.find('/')]
+            path_temp = path_temp[len(path1) + 1:]
+            event_name_temp = path_temp[:path_temp.find('/')]
+            path_temp = path_temp[len(event_name_temp) + 1:]
+            path2 = path_temp[:path_temp.find('/')]
+            path_temp = path_temp[len(path2) + 1:]
+            path3 = path_temp[:path_temp.find('/')]
+            path_temp = path_temp[len(path3) + 1:]
+            session_temp = path_temp[:path_temp.find('/')]
+            path_temp = path_temp[len(session_temp) + 1:]
+            drv_temp = path_temp
+
+            laps_list[i][0].append(drv_temp)
+            laps_list[i][0].append(event_name_temp + '_' + session_temp)
+
+        else:
+            print('\nYour category is not in the path. Please input the driver and the event for the laps: {}: \n'
+                  .format(l_path))
+            drv_nf_temp = input('Input the driver name: ')
+            event_nf_temp = input('Input the event name: ')
+            print('\nYou are using the {} category channels to calculate this laps.'.format(category))
+            laps_list[i][0].append(drv_nf_temp)
+            laps_list[i][0].append(event_nf_temp)
+
+        i += 1
+
+    return laps_list
+
+
+def Graph_colors():
+    color_white = 'rgba(255,255,255,0)'
+    color_red = 'rgb(254,0,0)'
+    color_blue = 'rgb(59,131,189)'
+    color_green = 'rgb(0,128,0)'
+    color_yellow = 'rgb(255,255,0)'
+    color_purple = 'rgb(255,0,255)'
+    color_black = 'rgb(0,0,0)'
+
+    return [color_red, color_blue, color_green, color_yellow, color_purple, color_black, color_white]
+
+
+def Colors(color):
+    # Colors with opacity
+    color_red_opac = 'rgba(254,0,0,0.3)'
+    color_blue_opac = 'rgba(59,131,189,0.3)'
+    color_yellow_opac = 'rgba(255,255,0,0.4)'
+    color_black_opac = 'rgba(0,0,0,0.25)'
+    color_purple_opac = 'rgba(255,0,255,0.3)'
+    color_green_opac = 'rgba(0,128,0,0.3)'
+    color_exit = ''
+
+    if color == 'rgb(254,0,0)':
+        color_exit = color_red_opac
+
+    elif color == 'rgb(59,131,189)':
+        color_exit = color_blue_opac
+
+    elif color == 'rgb(255,255,0)':
+        color_exit = color_yellow_opac
+
+    elif color == 'rgb(0,0,0)':
+        color_exit = color_black_opac
+
+    elif color == 'rgb(0,128,0)':
+        color_exit = color_green_opac
+
+    elif color == 'rgb(255,0,255)':
+        color_exit = color_purple_opac
+
+    return color_exit
+
+
+def zoom_center(lons: tuple = None, lats: tuple = None, lonlats: tuple = None,
+                projection: str = 'mercator',
+                width_to_height: float = 2.0) -> (float, dict):
+    if lons is None and lats is None:
+        if isinstance(lonlats, tuple):
+            lons, lats = zip(*lonlats)
+        else:
+            raise ValueError(
+                'Must pass lons & lats or lonlats'
+            )
+
+    maxlon, minlon = max(lons), min(lons)
+    maxlat, minlat = max(lats), min(lats)
+    center = {
+        'lon': round((maxlon + minlon) / 2, 6),
+        'lat': round((maxlat + minlat) / 2, 6)
+    }
+
+    # longitudinal range by zoom level (20 to 1)
+    # in degrees, if centered at equator
+    lon_zoom_range = np.array([
+        0.0007, 0.0014, 0.003, 0.006, 0.012, 0.024, 0.048, 0.096,
+        0.192, 0.3712, 0.768, 1.536, 3.072, 6.144, 11.8784, 23.7568,
+        47.5136, 98.304, 190.0544, 360.0
+    ])
+
+    if projection == 'mercator':
+        margin = 1.2
+        height = (maxlat - minlat) * margin * width_to_height
+        width = (maxlon - minlon) * margin
+        lon_zoom = np.interp(width, lon_zoom_range, range(20, 0, -1))
+        lat_zoom = np.interp(height, lon_zoom_range, range(20, 0, -1))
+        zoom = round(min(lon_zoom, lat_zoom), 2)
+    else:
+        raise NotImplementedError(
+            f'{projection} projection is not implemented'
+        )
+
+    return zoom, center
+
+
+def time_diff(s_list, matrix, driver, driver_list):
+    ref_driver_lap_time = matrix[0][26]
+    min_distance_drv = []
+    for drv_lap in range(0, len(driver_list)):
+        min_distance_drv.append(len(matrix[drv_lap][0]))
+    min_distance = min(min_distance_drv)
+
+    diff_time_drv_ref = []
+    diff_time_drv = []
+    lap_time_diff = 0
+    lap_time = [0]
+
+    if s_list[0][1] >= 0:
+        for element in range(s_list[0][1]):
+            diff_time_drv_ref.append(0)
+        lap_time_temp_ref_driver = diff_time_drv_ref + matrix[0][26]
+        lap_time_temp_ref_driver = lap_time_temp_ref_driver[0:len(lap_time_temp_ref_driver) - s_list[0][1]]
+    else:
+        for element in range(abs(s_list[0][1])):
+            diff_time_drv_ref.append(0)
+        lap_time_temp_ref_driver = matrix[0][26] + diff_time_drv_ref
+        lap_time_temp_ref_driver = lap_time_temp_ref_driver[abs(s_list[0][1]):]
+
+    if s_list[driver][1] >= 0:
+        for element in range(s_list[driver][1]):
+            diff_time_drv.append(0)
+        lap_time_temp = diff_time_drv + matrix[driver][26]
+        lap_time_temp = lap_time_temp[0:len(lap_time_temp) - s_list[driver][1]]
+    else:
+        for element in range(abs(s_list[driver][1])):
+            diff_time_drv.append(0)
+        lap_time_temp = matrix[driver][26] + diff_time_drv
+        lap_time_temp = lap_time_temp[abs(s_list[driver][1]):]
+
+    if len(driver_list) > 1:
+        if driver != 0:
+            for i in range(0, min_distance - 1):
+                if lap_time_temp[i] == 0 or lap_time_temp_ref_driver[i] == 0:
+                    lap_time.append(0)
+                else:
+                    lap_time.append(lap_time_temp_ref_driver[i] - lap_time_temp[i])
+
+            while lap_time_diff == 0:
+                for element in lap_time:
+                    if element != 0:
+                        lap_time_diff = element
+                        break
+                break
+
+            for i in range(0, len(lap_time)):
+                if lap_time[i] == 0:
+                    lap_time[i] = None
+                else:
+                    lap_time[i] = lap_time[i] - lap_time_diff
+
+    else:
+        lap_time = ref_driver_lap_time
+
+    return lap_time
+
+
+def Calculations(driver_filepath):
+    data = pd.DataFrame()
+    max_dist_all_laps = []
+    remove = []
+    for driver_lap in range(0, len(driver_filepath)):
+        lap_csv = pd.read_csv(driver_filepath[driver_lap], low_memory=False)
+        lap_csv = lap_csv.replace('NoRx', 0)
+        lap_csv[distance] = lap_csv[distance].round(decimals=0)
+        max_dist_all_laps.append(lap_csv[distance].max())
+        lap_csv[steer] = lap_csv[steer].astype(float)
+        lap_csv[steer] = lap_csv[steer].round(decimals=2)
+        lap_csv = lap_csv.astype({distance: 'int'})
+        data = pd.concat([data, lap_csv], ignore_index=True)
+
+    for element in range(0, len(max_dist_all_laps)):
+        if max_dist_all_laps[element] < max(max_dist_all_laps) * 0.98:
+            remove.append(element)
+    for lap in remove:
+        del max_dist_all_laps[lap]
+    min_distance_all_laps = int(min(max_dist_all_laps))
+
+    data = data.groupby([distance]).agg({
+        speed: ['median', 'min', 'max'],
+        steer: ['median', 'min', 'max'],
+        throttle: ['median', 'min', 'max'],
+        brake: ['median', 'min', 'max'],
+        gear: ['median', 'min', 'max'],
+        latitud: ['median', 'min', 'max'],
+        longitud: ['median', 'min', 'max'],
+        line: ['median', 'min', 'max']
+    }).reset_index()
+
+    data = data.loc[1:min_distance_all_laps]
+    speed_med = data[speed]['median'].tolist()
+    speed_max = data[speed]['max'].tolist()
+    speed_min = data[speed]['min'].tolist()
+    steer_med = data[steer]['median'].tolist()
+    steer_max = data[steer]['max'].tolist()
+    steer_min = data[steer]['min'].tolist()
+    throttle_med = data[throttle]['median'].tolist()
+    throttle_max = data[throttle]['max'].tolist()
+    throttle_min = data[throttle]['min'].tolist()
+    brake_med = data[brake]['median'].tolist()
+    brake_max = data[brake]['max'].tolist()
+    brake_min = data[brake]['min'].tolist()
+    gear_med = data[gear]['median'].tolist()
+    gear_max = data[gear]['max'].tolist()
+    gear_min = data[gear]['min'].tolist()
+    latitud_med = data[latitud]['median'].tolist()
+    latitud_max = data[latitud]['max'].tolist()
+    latitud_min = data[latitud]['min'].tolist()
+    longitud_med = data[longitud]['median'].tolist()
+    longitud_max = data[longitud]['max'].tolist()
+    longitud_min = data[longitud]['min'].tolist()
+    line_med = data[line]['median'].tolist()
+    line_max = data[line]['max'].tolist()
+    line_min = data[line]['min'].tolist()
+
+    dist_map = np.arange(1, min_distance_all_laps).tolist()
+    dist_rev_map = dist_map[::-1]
+    speed_min = speed_min[::-1]
+    steer_min = steer_min[::-1]
+    throttle_min = throttle_min[::-1]
+    brake_min = brake_min[::-1]
+    gear_min = gear_min[::-1]
+    latitud_min = latitud_min[::-1]
+    longitud_min = longitud_min[::-1]
+    line_min = line_min[::-1]
+
+    speed_med = savgol_filter(speed_med, 20, 3)
+    driver_lap_time = [0]
+    for i in range(1, len(speed_med)):
+        driver_lap_time.append((1 / (speed_med[i] / 3.6)) + driver_lap_time[i - 1])
+    driver_lap_time = [round(num, 3) for num in driver_lap_time]
+
+    # brake and throttle NORX
+    for idx in range(0, len(brake_med)):
+        if -10 <= brake_med[idx] <= 2:
+            brake_med[idx] = None
+
+    for idx in range(0, len(throttle_med)):
+        if -10 <= throttle_med[idx] <= 2:
+            throttle_med[idx] = None
+
+    for idx in range(0, len(brake_med)):
+        if brake_med[idx] and throttle_med[idx] is not None:
+            if -10 <= brake_med[idx] <= 5 and throttle_med[idx] > 80:
+                brake_med[idx] = None
+
+    for idx in range(0, len(throttle_med)):
+        if throttle_med[idx] and brake_med[idx] is not None:
+            if -10 <= throttle_med[idx] <= 3 and brake_med[idx] > 35:
+                throttle_med[idx] = None
+
+    return [dist_map,
+            dist_rev_map,
+            speed_med,
+            speed_max,
+            speed_min,
+            steer_med,
+            steer_max,
+            steer_min,
+            throttle_med,
+            throttle_max,
+            throttle_min,
+            brake_med,
+            brake_max,
+            brake_min,
+            gear_med,
+            gear_max,
+            gear_min,
+            latitud_med,
+            latitud_max,
+            latitud_min,
+            longitud_med,
+            longitud_max,
+            longitud_min,
+            line_med,
+            line_max,
+            line_min,
+            driver_lap_time]
+
+
+def Make_plot(matrix, driver_list, s_list, figure_range, category_input):
+    fig = make_subplots(rows=5, cols=1, shared_xaxes=True, row_heights=[0.1, 0.45, 0.2, 0.15, 0.1], x_title='Distance',
+                        specs=[[{"secondary_y": True}], [{"secondary_y": True}], [{"secondary_y": True}],
+                               [{"secondary_y": True}], [{"secondary_y": True}]], vertical_spacing=0.02)
+    colors = Graph_colors()
+    color_white = colors[6]
+    dic_colors = {}
+
+    for i in range(0, len(slide_colors)):
+        dic_colors[slide_colors[i]] = colors[i]
+
+    if len(driver_list) > 0:
+        for driver in range(0, len(driver_list)):
+            color = dic_colors[s_list[driver][2]]
+            color_opacity = Colors(color)
+            driver_name = str(driver_list[driver][0])
+            ref_driver_name = str(driver_list[0][0])
+
+            move_graph = s_list[driver][1]
+            lap_time = time_diff(s_list, matrix, driver, driver_list)
+
+            matrix[driver][0] = list(np.asarray(matrix[driver][0]) + move_graph)
+            matrix[driver][1] = list(np.asarray(matrix[driver][1]) + move_graph)
+
+            # Gear graph
+            # driver Gear opacity
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0] + matrix[driver][1],
+                y=matrix[driver][15] + matrix[driver][16],
+                opacity=0.8,
+                fill='toself',
+                fillcolor=color_opacity,
+                line_color=color_white,
+                legendgroup=str(driver),
+                showlegend=False,
+                visible=True,
+                hovertemplate=None,
+                hoverinfo='skip',
+            ), row=1, col=1, secondary_y=False)
+            # driver Gear
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0], y=matrix[driver][14],
+                line_color=color,
+                legendgroup=str(driver),
+                showlegend=True,
+                visible=True,
+                name=driver_name + ' run ' + str(driver_list[driver][1])
+            ), row=1, col=1, secondary_y=False)
+
+            # Speed graph
+            # driver Speed opacity
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0] + matrix[driver][1],
+                y=matrix[driver][3] + matrix[driver][4],
+                opacity=0.8,
+                fill='toself',
+                fillcolor=color_opacity,
+                line_color=color_white,
+                legendgroup=str(driver),
+                showlegend=False,
+                visible=True,
+                hovertemplate=None,
+                hoverinfo='skip',
+            ), row=2, col=1, secondary_y=False)
+            # driver Speed
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0], y=matrix[driver][2],
+                line_color=color,
+                legendgroup=str(driver),
+                showlegend=False,
+                visible=True,
+                name=driver_name + ' Speed'
+            ), row=2, col=1, secondary_y=False)
+
+            # Steer graph
+            # driver Steer opacity
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0] + matrix[driver][1],
+                y=matrix[driver][6] + matrix[driver][7],
+                opacity=0.8,
+                fill='toself',
+                fillcolor=color_opacity,
+                line_color=color_white,
+                legendgroup=str(driver),
+                showlegend=False,
+                visible=True,
+                hovertemplate=None,
+                hoverinfo='skip',
+            ), row=3, col=1, secondary_y=False)
+            # driver Steer
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0], y=matrix[driver][5],
+                line_color=color,
+                legendgroup=str(driver),
+                showlegend=False,
+                visible=True,
+                name=driver_name + ' Steer'
+            ), row=3, col=1, secondary_y=False)
+
+            # Throttle graph
+            # driver Throttle opacity
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0] + matrix[driver][1],
+                y=matrix[driver][9] + matrix[driver][10],
+                opacity=0.8,
+                fill='toself',
+                fillcolor=color_opacity,
+                line_color=color_white,
+                legendgroup=str(driver),
+                showlegend=False,
+                visible=True,
+                hovertemplate=None,
+                hoverinfo='skip',
+            ), row=4, col=1, secondary_y=False)
+            # driver Throttle
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0], y=matrix[driver][8],
+                line_color=color,
+                legendgroup=str(driver),
+                showlegend=False,
+                visible=True,
+                name=driver_name + ' Throttle'
+            ), row=4, col=1, secondary_y=False)
+
+            # Brake graph
+            # driver Brake opacity
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0] + matrix[driver][1],
+                y=matrix[driver][12] + matrix[driver][13],
+                opacity=0.8,
+                fill='toself',
+                fillcolor=color_opacity,
+                line_color=color_white,
+                legendgroup=str(driver),
+                showlegend=False,
+                visible=True,
+                hovertemplate=None,
+                hoverinfo='skip',
+            ), row=4, col=1, secondary_y=True)
+            # driver Brake
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0], y=matrix[driver][11],
+                line_color=color,
+                legendgroup=str(driver),
+                showlegend=False,
+                visible=True,
+                name=driver_name + ' Brake'
+            ), row=4, col=1, secondary_y=True)
+            # time_dif
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0], y=lap_time,
+                line_color=color,
+                legendgroup=str(driver),
+                showlegend=False,
+                visible=True,
+                name=ref_driver_name + ' vs ' + driver_name
+            ), row=5, col=1, secondary_y=False)
+
+            matrix[driver][0] = list(np.asarray(matrix[driver][0]) - move_graph)
+            matrix[driver][1] = list(np.asarray(matrix[driver][1]) - move_graph)
+
+        fig.update_yaxes(title_text="Gear", row=1, col=1, zeroline=False, fixedrange=True)
+        fig.update_yaxes(title_text="Speed", row=2, col=1, zeroline=False, fixedrange=True)
+        fig.update_yaxes(title_text="Steering angle", row=3, col=1, zeroline=False, fixedrange=True)
+        fig.update_yaxes(title_text="Throttle%", secondary_y=False, row=4, col=1, zeroline=False,
+                         rangemode='nonnegative', fixedrange=True)
+        fig.update_yaxes(title_text="Brake press", secondary_y=True, row=4, col=1, zeroline=False,
+                         rangemode='nonnegative', fixedrange=True)
+        fig.update_yaxes(title_text="Time diff", row=5, col=1, zeroline=True, fixedrange=True)
+        large_rockwell_template = dict(layout=go.Layout(title_font=dict(family="Rockwell", size=20)))
+        fig.update_layout(title='Pace comparison ' + category_input, template=large_rockwell_template,
+                          legend_tracegroupgap=20)
+        fig.update_layout(legend_groupclick='togglegroup')
+        fig.update_layout(hovermode='x')
+        fig.update_traces(xaxis='x5', mode="lines", hovertemplate=None)
+        fig.update_xaxes(matches='x', showspikes=True, spikecolor="black", spikesnap="data", spikemode="across",
+                         spikethickness=1, spikedash='solid', rangemode='nonnegative')
+        fig.update_xaxes(range=[figure_range[0], figure_range[1]], autorange=False)
+
+        return fig
+
+    else:
+        return fig
+
+
+def Make_GPS_plot(matrix, driver_list, s_list, figure_range, category_input):
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.7, 0.3], vertical_spacing=0.02, x_title='Distance',
+                        specs=[[{"type": "scattermapbox"}],
+                               [{"type": "scatter"}]])
+
+    colors = Graph_colors()
+    color_white = colors[6]
+    dic_colors = {}
+    for i in range(0, len(slide_colors)):
+        dic_colors[slide_colors[i]] = colors[i]
+
+    if len(driver_list) > 0:
+
+        zoom, center = zoom_center(
+            lons=matrix[0][20],
+            lats=matrix[0][17]
+        )
+
+        for driver in range(0, len(driver_list)):
+            color = dic_colors[s_list[driver][2]]
+            color_opacity = Colors(color)
+            driver_name = str(driver_list[driver][0])
+
+            fig.add_trace(go.Scattermapbox(
+                mode="lines",
+                lat=savgol_filter(matrix[driver][17], 20, 3),
+                lon=savgol_filter(matrix[driver][20], 20, 3),
+                line_color=color,
+                showlegend=True,
+                legendgroup=str(driver),
+                visible=True,
+                name=driver_name + ' run ' + str(driver_list[driver][1]),
+                hoverinfo='name'
+            ), row=1, col=1)
+            move_graph = s_list[driver][1]
+
+            matrix[driver][0] = list(np.asarray(matrix[driver][0]) + move_graph)
+            matrix[driver][1] = list(np.asarray(matrix[driver][1]) + move_graph)
+
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0] + matrix[driver][1],
+                y=matrix[driver][24] + matrix[driver][25],
+                opacity=0.8,
+                fill='toself',
+                fillcolor=color_opacity,
+                line_color=color_white,
+                legendgroup=str(driver),
+                showlegend=False,
+                visible=True,
+                hovertemplate=None,
+                hoverinfo='skip',
+            ), row=2, col=1)
+
+            fig.add_trace(go.Scatter(
+                x=matrix[driver][0], y=matrix[driver][23],
+                line_color=color,
+                legendgroup=str(driver),
+                showlegend=False,
+                visible=True,
+                name=driver_name + ' run ' + str(driver_list[driver][1])
+            ), row=2, col=1)
+
+            matrix[driver][0] = list(np.asarray(matrix[driver][0]) - move_graph)
+            matrix[driver][1] = list(np.asarray(matrix[driver][1]) - move_graph)
+
+        large_rockwell_template = dict(layout=go.Layout(title_font=dict(family="Rockwell", size=20)))
+        fig.update_layout(title='Line comparison ' + category_input, template=large_rockwell_template,
+                          legend_tracegroupgap=20)
+        fig.update_yaxes(row=2, col=1, title_text="Line", zeroline=False, fixedrange=True)
+        fig.update_layout(legend_groupclick='togglegroup')
+        fig.update_layout(hovermode='x')
+        fig.update_traces(row=2, col=1, xaxis='x', mode="lines", hovertemplate=None)
+        fig.update_xaxes(row=2, col=1, matches='x', showspikes=True, spikecolor="black", spikesnap="data",
+                         spikemode="across",
+                         spikethickness=1, spikedash='solid', rangemode='nonnegative')
+        fig.update_xaxes(row=2, col=1, range=[figure_range[0], figure_range[1]], autorange=False)
+
+        fig.update_layout(mapbox_zoom=zoom - 0.5,
+                          mapbox_center_lat=center['lat'],
+                          hovermode='x',
+                          mapbox_center_lon=center['lon'],
+                          mapbox_layers=[
+                              {
+                                  "below": 'traces'}
+                          ])
+        fig.update_mapboxes(row=1, col=1, pitch=10)
+        fig.update_mapboxes(row=1, col=1, style="stamen-terrain")
+        fig.update_traces(row=1, col=1, line_width=3)
+
+        return fig
+
+    else:
+        return fig
+
+
+def open_browser(port):
+    webbrowser.open_new("http://localhost:{}".format(port))
+
+
+def main():
+    port = 5010
+    category_list = ["F2", "F3", "F4", "EC3", "FA"]
+    menu_list = [category_list[0], 1]
+
+    app = dash.Dash(external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+
+    tabs_styles = {
+        'height': '44px',
+        'width': '100%',
+        'position': 'fixed',
+        'top': '0px',
+        'z-index': '128'
+    }
+    tab_style = {
+        'borderBottom': '1px solid #d6d6d6',
+        'padding': '6px',
+        'fontWeight': 'bold'
+    }
+    tab_selected_style = {
+        'borderTop': '1px solid #d6d6d6',
+        'borderBottom': '1px solid #d6d6d6',
+        'backgroundColor': '#119DFF',
+        'color': 'white',
+        'padding': '6px'
+    }
+
+    # Dropdown category tab1
+    @app.callback(
+        [dash.dependencies.Output("dd-output-container_category", "children"),
+         dash.dependencies.Output("memory-menu-category", "data"),
+         dash.dependencies.Output("speed_channels", "value"),
+         dash.dependencies.Output("steer_channels", "value"),
+         dash.dependencies.Output("throttle_channels", "value"),
+         dash.dependencies.Output("brake_channels", "value"),
+         dash.dependencies.Output("gear_channels", "value"),
+         dash.dependencies.Output("distance_channels", "value"),
+         dash.dependencies.Output("latitud_channels", "value"),
+         dash.dependencies.Output("longitud_channels", "value"),
+         dash.dependencies.Output("line_channels", "value")],
+        dash.dependencies.Input("category_list", "value"))
+    def category_list_working(selected_category):
+        menu_list[0] = selected_category
+        global speed, steer, throttle, brake, gear, distance, latitud, longitud, line
+
+        if selected_category == 'F2':
+            speed = speed_channels[0]
+            steer = steer_channels[0]
+            throttle = throttle_channels[0]
+            brake = brake_channels[0]
+            gear = gear_channels[0]
+            distance = distance_channels[0]
+            latitud = latitud_channels[0]
+            longitud = longitud_channels[0]
+            line = line_channels[0]
+
+        elif selected_category == 'F3':
+            speed = speed_channels[0]
+            steer = steer_channels[0]
+            throttle = throttle_channels[0]
+            brake = brake_channels[0]
+            gear = gear_channels[0]
+            distance = distance_channels[0]
+            latitud = latitud_channels[0]
+            longitud = longitud_channels[0]
+            line = line_channels[0]
+
+        elif selected_category == 'F4':
+            speed = speed_channels[1]
+            steer = steer_channels[0]
+            throttle = throttle_channels[1]
+            brake = brake_channels[0]
+            gear = gear_channels[0]
+            distance = distance_channels[0]
+            latitud = latitud_channels[0]
+            longitud = longitud_channels[0]
+            line = line_channels[0]
+
+        elif selected_category == 'EC3':
+            speed = speed_channels[0]
+            steer = steer_channels[0]
+            throttle = throttle_channels[0]
+            brake = brake_channels[0]
+            gear = gear_channels[0]
+            distance = distance_channels[0]
+            latitud = latitud_channels[0]
+            longitud = longitud_channels[0]
+            line = line_channels[0]
+
+        elif selected_category == 'FA':
+            speed = speed_channels[0]
+            steer = steer_channels[0]
+            throttle = throttle_channels[0]
+            brake = brake_channels[0]
+            gear = gear_channels[0]
+            distance = distance_channels[0]
+            latitud = latitud_channels[0]
+            longitud = longitud_channels[0]
+            line = line_channels[0]
+
+        return f'You have selected {selected_category} category', menu_list[0], speed, steer, throttle, brake, gear, \
+               distance, latitud, longitud, line
+
+    # Speed channel dropdown
+    @app.callback(
+        [dash.dependencies.Output("speed_channels", "options"),
+         dash.dependencies.Output("speed_input", "value")],
+        dash.dependencies.Input("speed_input_button", "n_clicks"),
+        dash.dependencies.State("speed_input", "value"), prevent_initial_call=True)
+    def input_speed(clicks, input_text):
+        global speed_channels
+        if clicks != 0 and input_text is not None:
+            speed_channels.append(input_text)
+            return speed_channels, ""
+        else:
+            return speed_channels, ""
+
+    # Steer channel dropdown
+    @app.callback(
+        [dash.dependencies.Output("steer_channels", "options"),
+         dash.dependencies.Output("steer_input", "value")],
+        dash.dependencies.Input("steer_input_button", "n_clicks"),
+        dash.dependencies.State("steer_input", "value"), prevent_initial_call=True)
+    def input_steer(clicks, input_text):
+        global steer_channels
+        if clicks != 0 and input_text is not None:
+            steer_channels.append(input_text)
+            return steer_channels, ""
+        else:
+            return steer_channels, ""
+
+    # throttle channel dropdown
+    @app.callback(
+        [dash.dependencies.Output("throttle_channels", "options"),
+         dash.dependencies.Output("throttle_input", "value")],
+        dash.dependencies.Input("throttle_input_button", "n_clicks"),
+        dash.dependencies.State("throttle_input", "value"), prevent_initial_call=True)
+    def input_throttle(clicks, input_text):
+        global throttle_channels
+        if clicks != 0 and input_text is not None:
+            throttle_channels.append(input_text)
+            return throttle_channels, ""
+        else:
+            return throttle_channels, ""
+
+    # brake channel dropdown
+    @app.callback(
+        [dash.dependencies.Output("brake_channels", "options"),
+         dash.dependencies.Output("brake_input", "value")],
+        dash.dependencies.Input("brake_input_button", "n_clicks"),
+        dash.dependencies.State("brake_input", "value"), prevent_initial_call=True)
+    def input_brake(clicks, input_text):
+        global brake_channels
+        if clicks != 0 and input_text is not None:
+            brake_channels.append(input_text)
+            return brake_channels, ""
+        else:
+            return brake_channels, ""
+
+    # gear channel dropdown
+    @app.callback(
+        [dash.dependencies.Output("gear_channels", "options"),
+         dash.dependencies.Output("gear_input", "value")],
+        dash.dependencies.Input("gear_input_button", "n_clicks"),
+        dash.dependencies.State("gear_input", "value"), prevent_initial_call=True)
+    def input_gear(clicks, input_text):
+        global gear_channels
+        if clicks != 0 and input_text is not None:
+            gear_channels.append(input_text)
+            return gear_channels, ""
+        else:
+            return gear_channels, ""
+
+    # distance channel dropdown
+    @app.callback(
+        [dash.dependencies.Output("distance_channels", "options"),
+         dash.dependencies.Output("distance_input", "value")],
+        dash.dependencies.Input("distance_input_button", "n_clicks"),
+        dash.dependencies.State("distance_input", "value"), prevent_initial_call=True)
+    def input_distance(clicks, input_text):
+        global distance_channels
+        if clicks != 0 and input_text is not None:
+            distance_channels.append(input_text)
+            return distance_channels, ""
+        else:
+            return distance_channels, ""
+
+    # latitud channel dropdown
+    @app.callback(
+        [dash.dependencies.Output("latitud_channels", "options"),
+         dash.dependencies.Output("latitud_input", "value")],
+        dash.dependencies.Input("latitud_input_button", "n_clicks"),
+        dash.dependencies.State("latitud_input", "value"), prevent_initial_call=True)
+    def input_latitud(clicks, input_text):
+        global latitud_channels
+        if clicks != 0 and input_text is not None:
+            latitud_channels.append(input_text)
+            return latitud_channels, ""
+        else:
+            return latitud_channels, ""
+
+    # longitud channel dropdown
+    @app.callback(
+        [dash.dependencies.Output("longitud_channels", "options"),
+         dash.dependencies.Output("longitud_input", "value")],
+        dash.dependencies.Input("longitud_input_button", "n_clicks"),
+        dash.dependencies.State("longitud_input", "value"), prevent_initial_call=True)
+    def input_longitud(clicks, input_text):
+        global longitud_channels
+        if clicks != 0 and input_text is not None:
+            longitud_channels.append(input_text)
+            return longitud_channels, ""
+        else:
+            return longitud_channels, ""
+
+    # line channel dropdown
+    @app.callback(
+        [dash.dependencies.Output("line_channels", "options"),
+         dash.dependencies.Output("line_input", "value")],
+        dash.dependencies.Input("line_input_button", "n_clicks"),
+        dash.dependencies.State("line_input", "value"), prevent_initial_call=True)
+    def input_line(clicks, input_text):
+        global line_channels
+        if clicks != 0 and input_text is not None:
+            line_channels.append(input_text)
+            return line_channels, ""
+        else:
+            return line_channels, ""
+
+    # Dropdown nuber of driver tab1
+    @app.callback(
+        [dash.dependencies.Output("dd-output-container_number_drivers", "children"),
+         dash.dependencies.Output("memory-menu-num-drivers", "data")],
+        dash.dependencies.Input("number_of_drivers", "value"))
+    def number_of_drivers(num_of_drivers):
+        menu_list[1] = num_of_drivers
+        return f'You are going to calculate {num_of_drivers} runs', menu_list[1]
+
+    # Calculation button tab1
+    @app.callback(
+        [dash.dependencies.Output("memory-calc_button", "data"),
+         dash.dependencies.Output("calculation-button", "style"),
+         dash.dependencies.Output("calculation-button", "title")],
+        dash.dependencies.Input("calculation-button", "n_clicks"),
+        [dash.dependencies.State("category_list", "value"),
+         dash.dependencies.State("number_of_drivers", "value"),
+         dash.dependencies.State('memory-calc_button', "data"),
+         dash.dependencies.State("speed_channels", "value"),
+         dash.dependencies.State("steer_channels", "value"),
+         dash.dependencies.State("throttle_channels", "value"),
+         dash.dependencies.State("brake_channels", "value"),
+         dash.dependencies.State("gear_channels", "value"),
+         dash.dependencies.State("distance_channels", "value"),
+         dash.dependencies.State("latitud_channels", "value"),
+         dash.dependencies.State("longitud_channels", "value"),
+         dash.dependencies.State("line_channels", "value")], prevent_initial_call=True)
+    def button_calculation(calc_button, category_selected, number_drivers, number_clicks, speed_select, steer_select,
+                           throttle_select, brake_select, gear_select, distance_select, latitud_select, longitud_select,
+                           line_select, ):
+        global calc_button_title, calc_button_style
+        if calc_button is not None:
+            global slider, fig_range, matrix_calc, slider_list, drv_list, driver_dropdown, slide_colors, \
+                speed, steer, throttle, brake, gear, distance, latitud, longitud, line, category_sel
+
+            category_sel = category_selected
+            speed = speed_select
+            steer = steer_select
+            throttle = throttle_select
+            brake = brake_select
+            gear = gear_select
+            distance = distance_select
+            latitud = latitud_select
+            longitud = longitud_select
+            line = line_select
+
+            all_laps = Get_all_laps(number_drivers, category_sel)
+            drv_list = []
+            for idx in range(len(all_laps)):
+                drv_list.append(all_laps[idx][0])
+
+            print(all_laps)
+
+            matrix_calc = []
+            fig_range_min = []
+            fig_range_max = []
+            driver_dropdown = []
+            slide_colors = ['Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Black']
+
+            for driver in range(0, len(drv_list)):
+                calc = Calculations(all_laps[driver][1:])
+                matrix_calc.append(calc)
+                driver_dropdown.append(str(all_laps[driver][0][0]) + ' ' + str(all_laps[driver][0][1]))
+                fig_range_min.append(min(matrix_calc[driver][0]))
+                fig_range_max.append(max(matrix_calc[driver][0]))
+
+            fig_range = [min(fig_range_min), max(fig_range_max)]
+            slider = 0
+
+            slider_list = []
+            color_idx = 0
+            for d in driver_dropdown:
+                slider_list.append([d, 0, slide_colors[color_idx]])
+                color_idx += 1
+
+            number_clicks += 1
+            calc_button_title = 'Calcs Done. Go to tab 2'
+            calc_button_style = {'background-color': 'Red', 'height': '8vh', 'font-size': 20}
+            return number_clicks, calc_button_style, calc_button_title
+        else:
+            calc_button_title = 'Start Calculation'
+            calc_button_style = {'background-color': 'Blue', 'height': '8vh', 'font-size': 20}
+            return number_clicks, calc_button_style, calc_button_title
+
+    # graph tab2
+    @app.callback(
+        dash.dependencies.Output("graph", "figure"),
+        [dash.dependencies.Input("slider", "value"),
+         dash.dependencies.Input("drop_down", "value"),
+         dash.dependencies.Input("colors_drop", "value"),
+         dash.dependencies.Input("memory-calc_button", "data")],
+        dash.dependencies.State("graph", "figure"))
+    def tab2_layout(dist_move, drop_list, color_drop_list, calc_button, figure_states):
+        if calc_button > 0:
+            if len(drop_list) > 0:
+                for element in slider_list:
+                    if drop_list == element[0]:
+                        element[1] = dist_move
+                        element[2] = color_drop_list
+            if figure_states is None:
+                fig = Make_plot(matrix_calc, drv_list, slider_list, fig_range, category_sel)
+
+            else:
+                fig = Make_plot(matrix_calc, drv_list, slider_list, fig_range, category_sel)
+                fig['layout']['xaxis']['range'] = figure_states['layout']['xaxis']['range']
+                if figure_states['data'] != fig['data']:
+                    for element in range(0, len(fig['data'])):
+                        fig['data'][element]['visible'] = figure_states['data'][element]['visible']
+            return fig
+        else:
+            fig = go.Figure()
+            return fig
+
+    # Inputs tab2
+    @app.callback(
+        [dash.dependencies.Output("slider", "value"),
+         dash.dependencies.Output("colors_drop", "value")],
+        [dash.dependencies.Input("drop_down", "value"),
+         dash.dependencies.Input("memory-calc_button", "data")])
+    def update_slider(drop_value, calc_button):
+        if len(drop_value) > 0 and calc_button is not None:
+            for element in slider_list:
+                if element[0] == drop_value:
+                    s_value = element[1]
+                    c_value = element[2]
+                    return s_value, c_value
+        else:
+            return 0, ""
+
+    # Download tab2
+    @app.callback(
+        [dash.dependencies.Output("modal", "is_open"),
+         dash.dependencies.Output('path', "value"),
+         dash.dependencies.Output("file_name", "value")],
+        dash.dependencies.Input("download", "n_clicks"),
+        [dash.dependencies.State("modal", "is_open")], prevent_initial_call=True)
+    def toggle_modal(n1, is_open):
+        event_temp = laps_path[0].find('/' + category_sel + '/')
+        event = laps_path[0][event_temp + 16:event_temp + 27] + '_' + laps_path[0][-6:-4]
+        file_name = event + '_PaceComparison'
+        path = GetFolderPath()
+        if n1:
+            return not is_open, path, file_name
+        return is_open, "", ""
+
+    # Download config tab2
+    @app.callback(
+        dash.dependencies.Output('download', 'style'),
+        [dash.dependencies.Input("btn_dwn", "n_clicks")],
+        [dash.dependencies.State('path', "value"),
+         dash.dependencies.State("file_name", "value"),
+         dash.dependencies.State("graph", "figure")], prevent_initial_call=True)
+    def download_fig(download_btn, dwn_path, filename, figure_states):
+        layout_filename = 'Pace_comparison_temp.html'
+        GPS_filename = 'GPS_comparison_temp.html'
+        complete_filename = filename + '.html'
+
+        if download_btn is not None:
+            fig1 = Make_plot(matrix_calc, drv_list, slider_list, fig_range, category_sel)
+            fig1['layout']['xaxis']['range'] = figure_states['layout']['xaxis']['range']
+            fig2 = Make_GPS_plot(matrix_calc, drv_list, slider_list, fig_range, category_sel)
+            fig2['layout']['xaxis']['range'] = figure_states['layout']['xaxis']['range']
+
+            fig1.write_html(dwn_path + '/' + layout_filename)
+            fig2.write_html(dwn_path + '/' + GPS_filename)
+
+            with open(dwn_path + '/' + layout_filename) as fp:
+                file1 = fp.read()
+
+            with open(dwn_path + '/' + GPS_filename) as fp:
+                file2 = fp.read()
+
+            file_complete = file1 + file2
+
+            with open(dwn_path + '/' + complete_filename, 'w') as fp:
+                fp.write(file_complete)
+
+            os.remove(dwn_path + '/' + layout_filename)
+            os.remove(dwn_path + '/' + GPS_filename)
+
+            return {'background-color': 'red'}
+
+    # GPS graph tab3
+    @app.callback(
+        dash.dependencies.Output("GPS_graph", "figure"),
+        dash.dependencies.Input("GPS_graph", "figure"))
+    def show_gps_fig(gps_figure):
+        if gps_figure is None:
+            gps_fig = Make_GPS_plot(matrix_calc, drv_list, slider_list, fig_range, category_sel)
+
+        else:
+            gps_fig = Make_GPS_plot(matrix_calc, drv_list, slider_list, fig_range, category_sel)
+            gps_fig['layout']['xaxis']['range'] = fig_range
+        return gps_fig
+
+    app.layout = html.Div([
+        dcc.Store('memory-calc_button', storage_type='session', data=0),
+        dcc.Tabs(
+            id="tabs-styled-with-inline",
+            value='tab-1',
+            children=[
+                dcc.Tab(
+                    id='tab1',
+                    label='Menu',
+                    value='tab-1',
+                    style=tab_style,
+                    disabled=False,
+                    selected_style=tab_selected_style
+                ),
+                dcc.Tab(
+                    id='tab2',
+                    label='Driving Layout',
+                    value='tab-2',
+                    style=tab_style,
+                    disabled=True,
+                    selected_style=tab_selected_style
+                ),
+                dcc.Tab(
+                    id='tab3',
+                    label='Line Layout',
+                    value='tab-3',
+                    style=tab_style,
+                    disabled=True,
+                    selected_style=tab_selected_style
+                ),
+            ], style=tabs_styles),
+        html.Div(id='tabs-content-inline')
+    ])
+
+    @app.callback([dash.dependencies.Output('tabs-content-inline', 'children'),
+                   dash.dependencies.Output("tab1", "disabled"),
+                   dash.dependencies.Output("tab2", "disabled"),
+                   dash.dependencies.Output("tab3", "disabled")],
+                  [dash.dependencies.Input('tabs-styled-with-inline', 'value'),
+                   dash.dependencies.Input("memory-calc_button", "data")])
+    def render_content(tab, calc_button):
+        global calc_button_title, calc_button_style
+        if calc_button == 0:
+            calc_button_title = 'Start Calculation'
+            calc_button_style = {'background-color': 'Blue', 'height': '8vh', 'font-size': 20}
+        tab1 = html.Div([
+            html.Blockquote(style={'height': ' 70px'}),
+            html.Div([
+                html.Div([
+                    dcc.Store('memory-menu-category', storage_type='session', data=menu_list[0]),
+                    dcc.Store('memory-menu-num-drivers', storage_type='session', data=menu_list[1]),
+                    html.Div([
+                        html.Blockquote(style={'height': ' 15px'}),
+                        html.H5('Pace Comparison Input Data', style={'font-size': 25}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "10% 80% 10%",
+                              'height': '5vh'}),
+
+                    html.Div([
+                        html.Blockquote(),
+                        html.H5('Select category', style={'font-size': 20}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "10% 80% 10%",
+                              'height': '3vh'}),
+
+                    html.Div([
+                        html.Blockquote(),
+                        dcc.Dropdown(category_list, menu_list[0], id='category_list', style={'font-size': 20},
+                                     persistence=True, persistence_type='session'),
+                    ], style={"display": "grid", "grid-template-columns": "10% 80% 10%",
+                              'height': '5vh'}),
+                    html.Div([
+                        html.Blockquote(),
+                        html.Div(id='dd-output-container_category'),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "10% 80% 10%",
+                              'height': '4vh'}),
+
+                    html.Div([
+                        html.Blockquote(),
+                        html.H5('Select channels', style={'font-size': 16.5}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "15% 80% 10%",
+                              'height': '3vh'}),
+
+                    # speed channels input
+                    html.Div([
+                        html.Blockquote(),
+                        dcc.Dropdown(speed_channels, speed_channels[0], id='speed_channels', style={'font-size': 14},
+                                     persistence=True, persistence_type='session'),
+                        html.Blockquote(),
+                        dcc.Input(id="speed_input", type="text", style={'height': 35,
+                                                                        'border-color': 'rgba(128,128,128,0.3)',
+                                                                        'border-radius': 5, 'width': '100%'}),
+                        html.Blockquote(),
+                        dbc.Button('Add', id="speed_input_button", n_clicks=0, style={'height': 35}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "15% 25% 1% 33% 1% 15% 10%",
+                              'height': '5vh'}),
+
+                    # steer channels input
+                    html.Div([
+                        html.Blockquote(),
+                        dcc.Dropdown(steer_channels, steer_channels[0], id='steer_channels', style={'font-size': 14},
+                                     persistence=True, persistence_type='session'),
+                        html.Blockquote(),
+                        dcc.Input(id="steer_input", type="text", style={'height': 35,
+                                                                        'border-color': 'rgba(128,128,128,0.3)',
+                                                                        'border-radius': 5, 'width': '100%'}),
+                        html.Blockquote(),
+                        dbc.Button('Add', id="steer_input_button", n_clicks=0, style={'height': 35}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "15% 25% 1% 33% 1% 15% 10%",
+                              'height': '5vh'}),
+
+                    # throttle channels input
+                    html.Div([
+                        html.Blockquote(),
+                        dcc.Dropdown(throttle_channels, throttle_channels[0], id='throttle_channels',
+                                     style={'font-size': 14}, persistence=True, persistence_type='session'),
+                        html.Blockquote(),
+                        dcc.Input(id="throttle_input", type="text", style={'height': 35,
+                                                                           'border-color': 'rgba(128,128,128,0.3)',
+                                                                           'border-radius': 5, 'width': '100%'}),
+                        html.Blockquote(),
+                        dbc.Button('Add', id="throttle_input_button", n_clicks=0, style={'height': 35}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "15% 25% 1% 33% 1% 15% 10%",
+                              'height': '5vh'}),
+
+                    # brake channels input
+                    html.Div([
+                        html.Blockquote(),
+                        dcc.Dropdown(brake_channels, brake_channels[0], id='brake_channels', style={'font-size': 14},
+                                     persistence=True, persistence_type='session'),
+                        html.Blockquote(),
+                        dcc.Input(id="brake_input", type="text", style={'height': 35,
+                                                                        'border-color': 'rgba(128,128,128,0.3)',
+                                                                        'border-radius': 5, 'width': '100%'}),
+                        html.Blockquote(),
+                        dbc.Button('Add', id="brake_input_button", n_clicks=0, style={'height': 35}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "15% 25% 1% 33% 1% 15% 10%",
+                              'height': '5vh'}),
+
+                    # gear channels input
+                    html.Div([
+                        html.Blockquote(),
+                        dcc.Dropdown(gear_channels, gear_channels[0], id='gear_channels', style={'font-size': 14},
+                                     persistence=True, persistence_type='session'),
+                        html.Blockquote(),
+                        dcc.Input(id="gear_input", type="text", style={'height': 35,
+                                                                       'border-color': 'rgba(128,128,128,0.3)',
+                                                                       'border-radius': 5, 'width': '100%'}),
+                        html.Blockquote(),
+                        dbc.Button('Add', id="gear_input_button", n_clicks=0, style={'height': 35}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "15% 25% 1% 33% 1% 15% 10%",
+                              'height': '5vh'}),
+
+                    # distance channels input
+                    html.Div([
+                        html.Blockquote(),
+                        dcc.Dropdown(distance_channels, distance_channels[0], id='distance_channels',
+                                     style={'font-size': 14}, persistence=True, persistence_type='session'),
+                        html.Blockquote(),
+                        dcc.Input(id="distance_input", type="text", style={'height': 35,
+                                                                           'border-color': 'rgba(128,128,128,0.3)',
+                                                                           'border-radius': 5, 'width': '100%'}),
+                        html.Blockquote(),
+                        dbc.Button('Add', id="distance_input_button", n_clicks=0, style={'height': 35}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "15% 25% 1% 33% 1% 15% 10%",
+                              'height': '5vh'}),
+
+                    # latitud channels input
+                    html.Div([
+                        html.Blockquote(),
+                        dcc.Dropdown(latitud_channels, latitud_channels[0], id='latitud_channels',
+                                     style={'font-size': 14}, persistence=True, persistence_type='session'),
+                        html.Blockquote(),
+                        dcc.Input(id="latitud_input", type="text", style={'height': 35,
+                                                                          'border-color': 'rgba(128,128,128,0.3)',
+                                                                          'border-radius': 5, 'width': '100%'}),
+                        html.Blockquote(),
+                        dbc.Button('Add', id="latitud_input_button", n_clicks=0, style={'height': 35}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "15% 25% 1% 33% 1% 15% 10%",
+                              'height': '5vh'}),
+
+                    # longitud channels input
+                    html.Div([
+                        html.Blockquote(),
+                        dcc.Dropdown(longitud_channels, longitud_channels[0], id='longitud_channels',
+                                     style={'font-size': 14}, persistence=True, persistence_type='session'),
+                        html.Blockquote(),
+                        dcc.Input(id="longitud_input", type="text", style={'height': 35,
+                                                                           'border-color': 'rgba(128,128,128,0.3)',
+                                                                           'border-radius': 5, 'width': '100%'}),
+                        html.Blockquote(),
+                        dbc.Button('Add', id="longitud_input_button", n_clicks=0, style={'height': 35}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "15% 25% 1% 33% 1% 15% 10%",
+                              'height': '5vh'}),
+
+                    # line channels input
+                    html.Div([
+                        html.Blockquote(),
+                        dcc.Dropdown(line_channels, line_channels[0], id='line_channels', style={'font-size': 14},
+                                     persistence=True, persistence_type='session'),
+                        html.Blockquote(),
+                        dcc.Input(id="line_input", type="text", style={'height': 35,
+                                                                       'border-color': 'rgba(128,128,128,0.3)',
+                                                                       'border-radius': 5, 'width': '100%'}),
+                        html.Blockquote(),
+                        dbc.Button('Add', id="line_input_button", n_clicks=0, style={'height': 35}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "15% 25% 1% 33% 1% 15% 10%",
+                              'height': '6.5vh'}),
+
+                    html.Div([
+                        html.Blockquote(),
+                        html.H5('Select numbers of runs to calculate', style={'font-size': 20}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "10% 80% 10%",
+                              'height': '3vh'}),
+                    html.Div([
+                        html.Blockquote(),
+                        dcc.Dropdown([1, 2, 3, 4, 5, 6], menu_list[1], id='number_of_drivers', style={'font-size': 20},
+                                     persistence=True, persistence_type='session'),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "10% 80% 10%",
+                              'height': '4vh'}),
+
+                    html.Div([
+                        html.Blockquote(),
+                        html.Div(id='dd-output-container_number_drivers'),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "10% 80% 10%",
+                              'height': '5vh'}),
+
+                    html.Div([
+                        html.Blockquote(),
+                        dbc.Button(calc_button_title, id="calculation-button", style=calc_button_style),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "10% 80% 10%", }),
+                ]),
+
+                html.Div([
+
+                    instructions_pacecomparison,
+                    html.Blockquote(),
+                    html.Div([
+
+                        dbc.Button("Downlad Pace_Comparison_V2.8.ech (General)", target="_blank",
+                                   href="https://b96647631-my.sharepoint.com/:u:/g/personal"
+                                        "/danieldiiorio_camposracing_com"
+                                        "/Ecf0VXVIkudNtUn0T4GBLCYBeptLOQ801H5cN3WfU_wXFQ?e=46Es3A"),
+                        html.Blockquote(),
+                        dbc.Button("Download Pace_Comparison_V2.8_F4.ech", target="_blank",
+                                   href="https://b96647631-my.sharepoint.com/:u:/g/personal"
+                                        "/danieldiiorio_camposracing_com/Ec1W9nMHwidCpkewu3SHkN4BTUok_6q2CEt"
+                                        "-McbP42mJ7g?e=XOfP8p"),
+                        html.Blockquote(),
+                        dbc.Button("Download Pace_Comparison_V2.8_EC3.ech", target="_blank",
+                                   href="https://b96647631-my.sharepoint.com/:u:/g/personal"
+                                        "/danieldiiorio_camposracing_com"
+                                        "/EZqP42eAnJdNqJ8IvSpn0HwBOtqWtPer1ZqNw_QGDx_JDg?e=7mmJnO"),
+                        html.Blockquote(),
+                        dbc.Button("Download Pace_Comparison_V2.8_FA.ech", target="_blank",
+                                   href="https://b96647631-my.sharepoint.com/:u:/g/personal"
+                                        "/danieldiiorio_camposracing_com/EULH-ThC2shKpq9sNGutuAYBuOY-qjAs9UvQNyey"
+                                        "-qV4Ww?e=95uy2i"),
+                    ]),
+                ]),
+
+            ], style={"display": "grid", "grid-template-columns": "50% 50%"})
+        ])
+
+        if calc_button > 0:
+            if tab == 'tab-1':
+                return tab1, False, False, False
+
+            elif tab == 'tab-2':
+
+                tab2 = html.Div([
+                    html.Blockquote(style={'height': ' 44px'}),
+                    html.Div([
+                        html.Blockquote(),
+                        dcc.Dropdown(driver_dropdown, driver_dropdown[0], id='drop_down'),
+                        html.Blockquote(),
+                        dcc.Dropdown(slide_colors, slide_colors[0], id='colors_drop'),
+                        html.Blockquote(),
+                        dcc.Slider(
+                            id='slider', min=-25, max=25, value=0,
+                            step=1),
+                        html.Blockquote(),
+                        dbc.Button('Download graph', id="download", style={'background-color': 'Blue'}),
+                        html.Blockquote(),
+                    ], style={"display": "grid", "grid-template-columns": "1% 12% 0.4% 6% 0.4% 68.8% 0.4% 10% 1%",
+                              'height': '5vh'}),
+                    html.Blockquote(),
+                    dbc.Modal(
+                        [
+                            dbc.ModalHeader("Download options"),
+                            dbc.ModalBody([
+                                "Path to download",
+                                dcc.Textarea(
+                                    id='path',
+                                    value="",
+                                    style={'width': '100%'}, cols='1'
+                                ),
+                                "File name",
+                                dcc.Textarea(
+                                    id='file_name',
+                                    value="",
+                                    style={'width': '100%'}, cols='1'
+                                )]
+                            ),
+                            dbc.ModalFooter(
+                                dbc.Button("Download", id="btn_dwn", className="ml-auto")
+                            ),
+                        ],
+                        id="modal",  # Give the modal an id name
+                        is_open=False,  # Open the modal at opening the webpage.
+                        size="xl",  # "sm", "lg", "xl" = small, large or extra large
+                        backdrop=True,  # Modal to not be closed by clicking on backdrop
+                        scrollable=True,  # Scrollable in case of large amount of text
+                        centered=True,  # Vertically center modal
+                        keyboard=True,  # Close modal when escape is pressed
+                        fade=True,  # True, False
+                        style={"max-width": "none", "width": "100%"}
+                    ),
+
+                    html.Div([
+                        dcc.Graph(id='graph', style={'height': '95vh'})
+                    ]),
+                    html.Blockquote()
+
+                ], style={'z-index': '-1'})
+
+                return tab2, False, False, False
+
+            elif tab == 'tab-3':
+
+                tab3 = html.Div([
+                    html.Blockquote(style={'height': ' 44px'}),
+                    html.Div([
+                        dcc.Graph(id='GPS_graph', style={'height': '90vh'}),
+                    ], style={'padding': 1, 'flex': 1})
+                ])
+
+                return tab3, False, False, False
+
+        else:
+            return tab1, False, True, True
+
+    open_browser(port)
+    app.run_server(debug=False, use_reloader=False, port=port)
+    os.system('cls')
+
+
+if __name__ == "__main__":
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.ERROR)
+    main()
